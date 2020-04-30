@@ -22,6 +22,7 @@ class OfficeHoursServer() extends Actor{
   var usernameToSocket: Map[String, SocketIOClient] = Map()
   var socketToUsername: Map[SocketIOClient, String] = Map()
   var socketToActor: Map[SocketIOClient, ActorRef] = Map()
+  var TASockets: List[SocketIOClient] = List()
   var queueLength = 0
 
   val config: Configuration = new Configuration {
@@ -100,8 +101,13 @@ class EnterQueueListener(server: OfficeHoursServer) extends DataListener[String]
     server.socketToUsername += (socket -> username)
     server.usernameToSocket += (username -> socket)
     newActor ! SetPosition(server.queueLength)
-    server.server.getBroadcastOperations.sendEvent("queue", server.queueJSON())
+    //server.server.getBroadcastOperations.sendEvent("queue", server.queueJSON())
     server.self ! Update
+    if(server.TASockets.size > 0){
+      for(look <- server.TASockets){
+        look.sendEvent("queue", server.queueJSON())
+      }
+    }
   }
 }
 
@@ -110,6 +116,9 @@ class ReadyForStudentListener(server: OfficeHoursServer) extends DataListener[No
   override def onData(socket: SocketIOClient, dirtyMessage: Nothing, ackRequest: AckRequest): Unit = {
     val queue = server.database.getQueue.sortBy(_.timestamp)
     server.self ! QueueDown
+    if(!server.TASockets.contains(socket)){
+      server.TASockets = server.TASockets :+ socket
+    }
     if(queue.nonEmpty){
       val studentToHelp = queue.head
       server.database.removeStudentFromQueue(studentToHelp.username)
@@ -117,7 +126,9 @@ class ReadyForStudentListener(server: OfficeHoursServer) extends DataListener[No
       if(server.usernameToSocket.contains(studentToHelp.username)){
         server.usernameToSocket(studentToHelp.username).sendEvent("message", "A TA is ready to help you")
       }
-      server.server.getBroadcastOperations.sendEvent("queue", server.queueJSON())
+      for(look <- server.TASockets){
+        look.sendEvent("queue", server.queueJSON())
+      }
     }
   }
 }
